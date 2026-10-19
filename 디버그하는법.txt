@@ -1,0 +1,128 @@
+# BlindWalk — AI Inference Prototype (점자블록 및 보행 장애물 실시간 추론 모듈)
+
+ROKEY 스터디의 한국형 AI 보행 유도시설 위험 인식 Android 시제품 중 온디바이스(On-Device) 듀얼 YOLO26 실시간 추론 및 거리·방향 추출 검증 모듈이다. 단독 검증 시제품 기준 패키지는 com.example.free이며, 본 프로젝트(com.example.blindwalk) 이식을 위한 세팅 및 디버그 방법을 안내한다.
+
+---
+
+## 0. 가장 빠른 테스트 방법 (코드 세팅 없이 스마트폰에서 바로 실행)
+
+Android Studio 세팅 전에 AI 인식 성능과 프레임 속도(FPS)부터 즉시 확인하고 싶다면 공유된 app-debug.apk 파일을 스마트폰에 설치해 바로 실행할 수 있다.
+
+1. 카카오톡/디스코드 또는 GitHub에 공유된 app-debug.apk를 안드로이드 스마트폰에 다운로드한다.
+2. 설치 시 '출처를 알 수 없는 앱' 경고가 뜨면 무시하고 설치를 누른다.
+3. 앱 실행 후 카메라 권한을 허용하면 즉시 후면 카메라가 켜지며 점자블록(초록), 보행 장애물(주황), 파손 블록(빨강), 추론 속도(ms/FPS)가 실시간으로 표시된다.
+
+---
+
+## 1. 개발 환경 및 추가 의존성
+
+| 항목 | 프로젝트 설정 |
+| :--- | :--- |
+| Android Studio | 사용자 입력: __________ |
+| 언어 / UI | Kotlin / Android Views (AppCompatActivity, Custom View) |
+| Java 소스·타깃 호환성 | 11 |
+| SDK | compile 37 / target 37 / min 24 |
+| CameraX | camera-core, camera-camera2, camera-lifecycle, camera-view (1.6.2) |
+| 추론 엔진 (Inference) | com.microsoft.onnxruntime:onnxruntime-android:1.31.0 |
+| AI 모델 (PC 학습·변환) | Python 3.12 (uv), ultralytics 8.4.182 (YOLO26), ONNX INT8 동적 양자화 |
+
+---
+
+## 2. 로컬 Android Studio 파일 배치 경로 (필수 체크)
+
+업로드된 파일들을 로컬 프로젝트에 세팅할 때는 반드시 아래 폴더 위치와 파일명을 정확히 맞춰야 에러 없이 빌드된다. (Android Studio 좌측 상단 프로젝트 뷰를 Android 대신 Project로 변경하면 아래 폴더 구조를 그대로 확인할 수 있다.)
+
+### 전체 디렉터리 구조
+app/src/main/
+├── assets/
+│   ├── best.onnx                   # 커스텀 학습 점자블록 모델 (YOLO26n-seg, 320x320, INT8 양자화)
+│   └── yolo26n.onnx                # 보행 장애물 17종 탐지 모델 (YOLO26n, 320x320, INT8 양자화)
+├── java/com/example/free/
+│   ├── MainActivity.kt             # 카메라 권한 요청·CameraX 4:3 바인딩·회전/스케일 단일 행렬 전처리
+│   ├── YoloDetector.kt             # 듀얼 ONNX 2-Thread 병렬 추론·FloatBuffer 파싱·NMS·거리/방향 계산
+│   └── BoundingBoxView.kt          # 4:3 레터박스 오프셋 보정·카테고리별 바운딩 박스·FPS 오버레이 렌더링
+└── res/layout/
+    └── activity_main.xml           # PreviewView(FIT_CENTER) 및 BoundingBoxView 중첩 레이아웃
+
+### 파일별 상세 배치 주의사항
+1. AI 모델 파일 2개 (app/src/main/assets/)
+   - app/src/main/ 아래에 assets 폴더가 없다면 새로 생성(우클릭 -> New -> Directory -> assets)한 뒤 best.onnx와 yolo26n.onnx를 넣는다.
+   - 만약 파일명이 best_int8.onnx, yolo26n_int8.onnx로 되어 있다면 이름을 best.onnx, yolo26n.onnx로 변경하거나 YoloDetector.kt 내부 context.assets.open(...)의 파일명과 일치시킨다.
+
+2. 코틀린 소스 코드 3개 (app/src/main/java/com/example/free/)
+   - MainActivity.kt, YoloDetector.kt, BoundingBoxView.kt를 배치한다.
+   - 본 프로젝트(com.example.blindwalk)로 이식할 경우, 각 파일 최상단의 package com.example.free 선언을 이동할 패키지 경로에 맞게 수정한다.
+
+3. 레이아웃 XML 파일 (app/src/main/res/layout/activity_main.xml)
+   - 패키지명을 변경한 경우 activity_main.xml 내부의 <com.example.free.BoundingBoxView ... /> 태그 경로도 변경된 패키지명으로 수정한다.
+
+---
+
+## 3. Gradle 및 AndroidManifest 설정
+
+### ① app/build.gradle.kts 의존성 추가
+dependencies 블록 안에 ONNX Runtime과 CameraX 라이브러리를 추가하고 우측 상단의 Sync Now를 클릭한다.
+
+    // ONNX Runtime for Android
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.0")
+
+    // CameraX
+    val cameraxVersion = "1.6.2"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+
+### ② AndroidManifest.xml 카메라 권한 확인
+app/src/main/AndroidManifest.xml 파일의 <application> 태그 위쪽에 카메라 권한이 선언되어 있는지 확인한다.
+
+    <uses-feature android:name="android.hardware.camera.any" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+---
+
+## 4. 현재 구현된 AI 기능 요약
+
+- 하이브리드 듀얼 YOLO26 2-Thread 병렬 추론 (입력 해상도 320x320, XNNPACK 가속, INT8 동적 양자화 적용):
+  - 점자블록 모델 (best.onnx): 바닥의 점자블록 및 파손블록 탐지. 노란 은행잎·차선 페인트 등 색상 오인식을 막기 위해 화면 상단 40% 배제(cy < 130f), 최소 박스 크기 제한(w, h >= 35f), 신뢰도 임계값 상향(0.78f) 필터 적용.
+  - 보행 장애물 모델 (yolo26n.onnx): COCO 80종 중 보행 위협 요소 17종(사람, 자전거, 자동차, 오토바이, 버스, 트럭, 벤치, 소화전, 개, 의자, 화분 등)만 선별 탐지.
+- 거리 및 방향 실시간 계산:
+  - 바운딩 박스 픽셀 높이 반비례 공식(Distance = 225 / BoxHeight, 범위 0.5m ~ 10.0m)으로 거리 근사치 추출.
+  - 화면 가로 3분할 기준 방향(왼쪽 / 정면 / 오른쪽) 판별.
+- 초고속 전처리 및 렌더링:
+  - CameraX 4:3 비율 고정, 센서 회전 및 320x320 축소를 단일 Matrix 연산으로 통합, JNI Native FloatBuffer 직접 파싱으로 GC 병목 제거.
+
+---
+
+## 5. 실물 스마트폰 연결 및 디버그(Run) 순서
+
+1. 스마트폰 [설정 -> 휴대전화 정보 -> 소프트웨어 정보 -> 빌드번호 7번 연속 터치]로 개발자 옵션을 켠다.
+2. [설정 -> 개발자 옵션 -> USB 디버깅 켜기] 후 PC와 USB로 연결한다.
+3. Android Studio 상단 기기 목록에서 연결된 스마트폰을 선택하고 Run(▶, Shift + F10)을 누른다.
+4. 앱 실행 후 카메라 권한을 허용하고 다음 항목을 확인한다:
+   - 주변 사람, 의자, 가방 등 비추기 -> 주황색 박스 ([의자] 정면 1.8m) 표시 확인
+   - 길거리 점자블록 비추기 -> 초록색 박스 ([점자블록] 정면 1.5m) 표시 확인
+   - 좌측 상단 계기판 -> 인식 속도: XXms (XX.X회/초) 실시간 갱신 확인
+
+Windows 터미널 빌드 명령어:
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
+
+---
+
+## 6. 자주 발생하는 디버그 에러 해결 (FAQ)
+
+- 앱 실행 즉시 강제 종료 (FileNotFoundException: best.onnx)
+  -> 원인: assets 폴더 위치 또는 파일명 불일치.
+  -> 해결: 파일이 정확히 app/src/main/assets/best.onnx 와 yolo26n.onnx 경로에 있는지 확인한다 (res/assets 아님).
+
+- 앱 실행 즉시 강제 종료 (ClassNotFoundException: com.example.free.BoundingBoxView)
+  -> 원인: 패키지 이름은 변경했으나 activity_main.xml의 커스텀 뷰 경로는 변경하지 않음.
+  -> 해결: activity_main.xml 내 <com.example.free.BoundingBoxView> 태그의 패키지명을 실제 코드의 패키지명과 일치시킨다.
+
+- 실내에서 PC 모니터에 띄운 점자블록 사진/영상을 비췄는데 잘 안 잡히는 경우
+  -> 원인: 모니터 빛 반사·모아레 현상으로 인해 신뢰도 점수가 낮게 나오는데, 실제 도로의 노란 낙엽 오인식 방지 필터(0.78f)가 높게 설정되어 있어 걸러짐.
+  -> 해결: 모니터 화면 촬영으로 테스트할 때는 YoloDetector.kt의 createResultIfValid 함수 내 if (score < 0.78f) 값을 일시적으로 0.45f로 낮추어 테스트한다.
+
+- SDK location not found 빌드 에러
+  -> 원인: 로컬 PC의 SDK 경로(local.properties) 미생성.
+  -> 해결: Android Studio 상단 메뉴에서 File -> Sync Project with Gradle Files를 실행하면 자동 생성된다.
